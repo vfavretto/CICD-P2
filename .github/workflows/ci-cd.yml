@@ -16,6 +16,9 @@ jobs:
     name: Continuous Integration
     runs-on: ubuntu-latest
     
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    
     steps:
       # Checkout do código
       - name: Checkout Repository
@@ -38,16 +41,55 @@ jobs:
       - name: Build Application
         run: npm run build
 
-      # Versionamento semântico
-      - name: Semantic Versioning
+      # Versionamento Semântico
+      - name: Generate Semantic Version
         id: version
         run: |
-          # Gera versão baseada no timestamp e commit
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="1.0.${TIMESTAMP}-${SHORT_SHA}"
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Generated version: ${VERSION}"
+          # Obter a última tag (se existir)
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Last tag: $LAST_TAG"
+          
+          # Extrair versão sem o 'v'
+          LAST_VERSION=${LAST_TAG#v}
+          
+          # Separar major.minor.patch
+          IFS='.' read -ra VERSION_PARTS <<< "$LAST_VERSION"
+          MAJOR=${VERSION_PARTS[0]:-0}
+          MINOR=${VERSION_PARTS[1]:-0}  
+          PATCH=${VERSION_PARTS[2]:-0}
+          
+          # Determinar tipo de bump baseado na mensagem do commit
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+          
+          if [[ $COMMIT_MSG =~ ^(feat|feature)(\(.+\))?!:|^[A-Za-z]+(\(.+\))?!:|BREAKING[[:space:]]CHANGE ]]; then
+            # Breaking change - bump major
+            NEW_MAJOR=$((MAJOR + 1))
+            NEW_MINOR=0
+            NEW_PATCH=0
+          elif [[ $COMMIT_MSG =~ ^feat(\(.+\))?:|^feature(\(.+\))?: ]]; then
+            # New feature - bump minor
+            NEW_MAJOR=$MAJOR
+            NEW_MINOR=$((MINOR + 1))
+            NEW_PATCH=0
+          elif [[ $COMMIT_MSG =~ ^(fix|hotfix|patch)(\(.+\))?:|^(build|ci|docs|perf|refactor|style|test)(\(.+\))?: ]]; then
+            # Bug fix or other - bump patch
+            NEW_MAJOR=$MAJOR
+            NEW_MINOR=$MINOR
+            NEW_PATCH=$((PATCH + 1))
+          else
+            # Default - bump patch
+            NEW_MAJOR=$MAJOR
+            NEW_MINOR=$MINOR
+            NEW_PATCH=$((PATCH + 1))
+          fi
+          
+          # Gerar nova versão (apenas semver limpo)
+          NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
+          
+          echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          echo "Generated version: $NEW_VERSION"
 
       - name: Build Docker Image
         run: |
@@ -57,18 +99,11 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
+          name: build-artifacts-${{ steps.version.outputs.VERSION }}
           path: |
             package.json
             src/
           retention-days: 30
-
-      - name: Set Version Output
-        id: set-version
-        run: echo "version=${{ steps.version.outputs.VERSION }}" >> $GITHUB_OUTPUT
-
-    outputs:
-      version: ${{ steps.set-version.outputs.version }}
 
   cd:
     name: Continuous Deployment
@@ -80,15 +115,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install Dependencies
-        run: npm ci
-
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -97,52 +123,21 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          # Build da imagem com a versão gerada no CI
           docker build -t ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }} .
           docker tag ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }} ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          
-          # Push das imagens
           docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }}
           docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
 
       - name: Deploy to Render
         run: |
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "environment_variables": {
-                "DOCKER_IMAGE": "${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }}",
-                "DB_HOST": "${{ secrets.DB_HOST }}",
-                "DB_NAME": "${{ secrets.DB_NAME }}",
-                "DB_USER": "${{ secrets.DB_USER }}",
-                "DB_PASSWORD": "${{ secrets.DB_PASSWORD }}",
-                "LOGTAIL_SOURCE_TOKEN": "${{ secrets.LOGTAIL_SOURCE_TOKEN }}",
-                "NODE_ENV": "production"
-              }
-            }'
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
 
-      # Criar release/tag no GitHub
-      - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        with:
-          tag_name: v${{ needs.ci.outputs.version }}
-          release_name: Release v${{ needs.ci.outputs.version }}
-          body: |
-            ## 🚀 Release v${{ needs.ci.outputs.version }}
-            
-            ### Mudanças nesta versão:
-            - Deploy automático via CI/CD
-            - Imagem Docker: `${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }}`
-            
-            ### 📦 Deployment:
-            - ✅ Docker Hub: Imagem publicada
-            - ✅ Render: Deploy realizado
-            
-            **Commit:** ${{ github.sha }}
-          draft: false
-          prerelease: false
+      - name: Log Deployment Info
+        run: |
+          echo "🚀 Deployment completed!"
+          echo "📦 Version: ${{ needs.ci.outputs.version }}"
+          echo "🐳 Docker Image: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }}"
+          echo "🔗 Commit: ${{ github.sha }}"
 
   notify-on-failure:
     name: Notify on Failure
@@ -162,14 +157,16 @@ jobs:
           to: ${{ secrets.NOTIFICATION_EMAIL }}
           from: ${{ secrets.EMAIL_USERNAME }}
           body: |
-            O pipeline CI/CD falhou!
+            🚨 O pipeline CI/CD falhou!
             
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref }}
-            Commit: ${{ github.sha }}
-            Workflow: ${{ github.workflow }}
+            **Repository:** ${{ github.repository }}
+            **Branch:** ${{ github.ref }}
+            **Commit:** ${{ github.sha }}
+            **Workflow:** ${{ github.workflow }}
+            **Run ID:** ${{ github.run_id }}
             
-            Verifique os logs em: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **🔍 Verifique os logs em:**
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
   cleanup:
     name: Cleanup Old Artifacts
@@ -183,13 +180,14 @@ jobs:
         with:
           script: |
             const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - 30); // 30 dias atrás
+            cutoffDate.setDate(cutoffDate.getDate() - 30);
             
             const artifacts = await github.rest.actions.listArtifactsForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
             
+            let deletedCount = 0;
             for (const artifact of artifacts.data.artifacts) {
               const createdAt = new Date(artifact.created_at);
               if (createdAt < cutoffDate) {
@@ -198,6 +196,8 @@ jobs:
                   repo: context.repo.repo,
                   artifact_id: artifact.id,
                 });
-                console.log(`Deleted artifact: ${artifact.name}`);
+                console.log(`🗑️ Deleted artifact: ${artifact.name}`);
+                deletedCount++;
               }
-            } 
+            }
+            console.log(`✅ Cleanup completed. ${deletedCount} artifacts deleted.`); 
