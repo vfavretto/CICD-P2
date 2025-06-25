@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  api:
+    image: ${DOCKER_USERNAME}/cicd-api:${VERSION}
+    container_name: cicd-api-prod
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      LOGTAIL_SOURCE_TOKEN: ${LOGTAIL_SOURCE_TOKEN}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: cicd-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - api
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+networks:
+  cicd-network:
+    driver: bridge 
