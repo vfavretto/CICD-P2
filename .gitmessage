@@ -1,0 +1,26 @@
+# <tipo>: <descrição curta>
+#
+# <corpo da mensagem>
+#
+# <rodapé>
+
+# Tipos de commit:
+# feat: Nova funcionalidade
+# fix: Correção de bug
+# docs: Mudanças na documentação
+# style: Mudanças de formatação, espaços em branco, etc.
+# refactor: Refatoração de código sem mudança de funcionalidade
+# test: Adição ou correção de testes
+# chore: Mudanças em tarefas de build, configurações, etc.
+# perf: Melhoria de performance
+# ci: Mudanças nos arquivos de CI/CD
+# build: Mudanças no sistema de build ou dependências
+
+# Exemplo:
+# feat: adiciona endpoint para criação de usuário
+#
+# - Implementa POST /api/v1/users
+# - Adiciona validação de email único
+# - Inclui documentação Swagger
+#
+# Closes #123 
