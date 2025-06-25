@@ -128,10 +128,6 @@ jobs:
           docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ needs.ci.outputs.version }}
           docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
 
-      - name: Deploy to Render
-        run: |
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
-
       - name: Log Deployment Info
         run: |
           echo "🚀 Deployment completed!"
